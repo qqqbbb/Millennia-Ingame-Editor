@@ -2,6 +2,7 @@
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 
 
@@ -13,9 +14,8 @@ namespace Ingame_Editor
         {
             Color[] pixels = new Color[width * height];
             for (int i = 0; i < pixels.Length; ++i)
-            {
                 pixels[i] = color;
-            }
+
             Texture2D result = new Texture2D(width, height);
             result.SetPixels(pixels);
             result.Apply();
@@ -50,7 +50,7 @@ namespace Ingame_Editor
             foreach (string key in AEntityInfoManager.Instance.EntityInfo.Keys)
             {
                 AEntityInfo entityInfo = AEntityInfoManager.Instance.EntityInfo[key];
-                if (ShouldNotSpawn(entityInfo))
+                if (ShouldNotSpawnUnit(entityInfo))
                     continue;
 
                 foreach (var tag in tags)
@@ -88,7 +88,7 @@ namespace Ingame_Editor
             foreach (string key in AEntityInfoManager.Instance.EntityInfo.Keys)
             {
                 AEntityInfo entityInfo = AEntityInfoManager.Instance.EntityInfo[key];
-                if (ShouldNotSpawn(entityInfo))
+                if (ShouldNotSpawnUnit(entityInfo))
                     continue;
 
                 bool skip = false;
@@ -112,18 +112,20 @@ namespace Ingame_Editor
             foreach (string key in AEntityInfoManager.Instance.EntityInfo.Keys)
             {
                 AEntityInfo entityInfo = AEntityInfoManager.Instance.EntityInfo[key];
-                if (ShouldNotSpawn(entityInfo))
+                if (ShouldNotSpawnUnit(entityInfo))
                     continue;
 
                 if (entityInfo.Tags.Contains(tag))
+                {
                     units.Add(entityInfo);
+                }
             }
             return units;
         }
 
-        private static bool ShouldNotSpawn(AEntityInfo entityInfo)
+        private static bool ShouldNotSpawnUnit(AEntityInfo entityInfo)
         {
-            return entityInfo.ID == "UNIT_DRONECARRIER" || entityInfo.ID.StartsWith("UNIT_COMBAT") || entityInfo.ID == "UNIT_SETTLER_REGION" || entityInfo.ID.Contains("_BASE") || entityInfo.ID.Contains("MILITIA") || entityInfo.ID.EndsWith("DEFENDER") || entityInfo.ID.Contains("TRANSPORT");
+            return entityInfo.ID == "UNIT_LEADER" || entityInfo.ID == "UNIT_DRONECARRIER" || entityInfo.ID.StartsWith("UNIT_COMBAT") || entityInfo.ID == "UNIT_SETTLER_REGION" || entityInfo.ID == "UNIT_REVOLUTIONARY" || entityInfo.ID.Contains("_BASE") || entityInfo.ID.Contains("MILITIA") || entityInfo.ID.EndsWith("DEFENDER") || entityInfo.ID.Contains("TRANSPORT");
         }
 
         static public bool IsWaterTile(ALocation location)
@@ -139,9 +141,50 @@ namespace Ingame_Editor
                 Main.logger.LogInfo(kv.Key + ":::" + kv.Value + "...");
                 Main.logger.LogInfo("---------------------");
             }
-            Main.logger.LogInfo("StringTable dump !!!");
         }
 
+        static public bool IsGoodsTypeValidForTerrain(ATerrainType terrainType, string tileID)
+        {
+            //Main.logger.LogInfo("IsGoodsTypeValidForTerrain terrainType " + terrainType + " tileID " + tileID);
+            AEntityInfo ei = AEntityInfoManager.Instance.Get(tileID);
+            if (ei == null)
+            {
+                //Main.logger.LogInfo("IsGoodsTypeValidForTerrain " + tileID + " ei == null ");
+                return false;
+            }
+            string tagName = ATerrainType.cValidTileResourceTerrainRoot + terrainType.ID;
+            //Main.logger.LogInfo("IsGoodsTypeValidForTerrain " + ei.ID + " tagName " + tagName + " " + ei.HasTag(tagName));
+            return ei.HasTag(tagName);
+        }
+
+        static public bool IsGoodsTypeValidForPlayer(string terrainType, int forPlayer)
+        {
+            APlayer player = null;
+            AEntityInfo ei = AEntityInfoManager.Instance.Get(terrainType);
+            if (forPlayer > -1)
+                player = AGame.Instance.GetPlayer(forPlayer);
+
+            if (player != null && player.IsTileTypeHidden(ei.ID))
+                return false;
+
+            return true;
+        }
+
+        private void PrintUnits(List<AEntityInfo> units)
+        {
+            Main.logger.LogInfo("unitList ");
+            foreach (var unit in units)
+                Main.logger.LogInfo(" " + unit.ID);
+        }
+
+        static public string GetAgeName(ACard age)
+        {
+            string name = age.GetCardTitle();
+            if (age.ID.EndsWith("CRISISWASTELAND_ADVANCE"))
+                name = AStringTable.Instance.GetString("TECHAGE9_CRISISWASTELAND-AgeTitle");
+
+            return name;
+        }
 
 
     }

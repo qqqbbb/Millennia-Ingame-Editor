@@ -21,14 +21,18 @@ namespace Ingame_Editor
             [HarmonyPrefix, HarmonyPatch("DoCitySelection")]
             public static bool DoCitySelectionPrefix(AInputHandler __instance)
             {
+                //DebugMessage.instance.ShowMessage("DoCitySelection");
+                if (Editor.mouseCursorOnEditorWindow == false)
+                    Editor.CloseEditorWindow();
+
                 return !Editor.mouseCursorOnEditorWindow;
             }
             [HarmonyPrefix, HarmonyPatch("DoMiscKeys")]
             public static bool DoMiscKeysPrefix(AInputHandler __instance)
             { // dont show game menu
-                return !Editor.showingWindow;
+                return !Editor.showingEditorWindow;
             }
-            [HarmonyPostfix, HarmonyPatch("ClearSelection")]
+            [HarmonyPrefix, HarmonyPatch("ClearSelection")]
             public static void SetSelectionPostfix(AInputHandler __instance)
             {
                 //DebugMessage.instance.ShowMessage("ClearSelection ");
@@ -43,7 +47,12 @@ namespace Ingame_Editor
                     Editor.SelectLocation(locToSelect);
             }
             [HarmonyPrefix, HarmonyPatch("DoZoom")]
-            public static bool SelectTilePostfix(AInputHandler __instance)
+            public static bool SelectTilePrefix(AInputHandler __instance)
+            {
+                return !Editor.mouseCursorOnEditorWindow;
+            }
+            [HarmonyPrefix, HarmonyPatch("SetSelection", new Type[] { typeof(ALocation) })]
+            public static bool SetSelectionPrefix(AInputHandler __instance)
             {
                 return !Editor.mouseCursorOnEditorWindow;
             }
@@ -89,7 +98,15 @@ namespace Ingame_Editor
             [HarmonyPrefix, HarmonyPatch("OpenDiplomacyOverview")]
             public static bool OpenDiplomacyOverviewPrefix(AUIManager __instance)
             {
+                if (Editor.mouseCursorOnEditorWindow == false)
+                    Editor.CloseEditorWindow();
+
                 return !Editor.mouseCursorOnEditorWindow;
+            }
+            //[HarmonyPostfix, HarmonyPatch("OnTimelineButtonPressed")]
+            public static void OnTimelineButtonPressedPostfix(AUIManager __instance)
+            {
+                Editor.CloseEditorWindow();
             }
         }
 
@@ -144,53 +161,29 @@ namespace Ingame_Editor
             }
         }
 
-        //[HarmonyPatch(typeof(AEntityCharacter))]
-        class AArmyPanel_Patch
+        [HarmonyPatch(typeof(AResearchDialog))]
+        class AResearchDialog_Patch
         {
-            //[HarmonyPrefix, HarmonyPatch("DestroyEntity")]
-            public static void SetPendingDestinationPrefix(AEntityCharacter __instance)
+            [HarmonyPostfix, HarmonyPatch("OpenDialog")]
+            public static void OpenDialogPostfix(AResearchDialog __instance)
             {
-                Main.logger.LogDebug("DestroyEntity " + __instance.TypeID);
-                //DebugMessage.instance.ShowMessage("CreateCardActionButton " + tileActionText);
-                //Editor.ClearSelection();
+                Editor.CloseEditorWindow();
             }
         }
 
-        //[HarmonyPatch(typeof(ACardEffect))]
-        class ACardEffect_Patch
+        [HarmonyPatch(typeof(ABuilderButtonPanel))]
+        class ABuilderButtonPanel_Patch
         {
-            //[HarmonyPrefix, HarmonyPatch("DoCardEffectDestroyEntity")]
-            public static bool DoCardEffectDestroyEntityPrefix(ACardEffect __instance)
+            [HarmonyPrefix, HarmonyPatch("OnBuildImprovementButtonPressed")]
+            public static bool OnBuildImprovementButtonPressedPrefix(ABuilderButtonPanel __instance)
             {
-                //Main.logger.LogDebug("DoCardEffectDestroyEntity ");
-                //DebugMessage.instance.ShowMessage("DoCardEffectDestroyEntity ");
-                return !Editor.mouseCursorOnEditorWindow;
-
-            }
-        }
-
-        //[HarmonyPatch(typeof(ACard))]
-        class ACard_Patch
-        {
-            //[HarmonyPrefix, HarmonyPatch("Play")]
-            public static bool PlayPrefix(ACard __instance)
-            {
-                Main.logger.LogDebug("ACard Play " + __instance.ID);
-                //DebugMessage.instance.ShowMessage("Play " + __instance);
+                //DebugMessage.instance.ShowMessage("OnBuildImprovementButtonPressed");
                 return !Editor.mouseCursorOnEditorWindow;
             }
-        }
-
-
-        //[HarmonyPatch(typeof(ACommandManager))]
-        class ACardEffects_Patch
-        {
-            //[HarmonyPrefix, HarmonyPatch("DoZoom")]
-            public static bool PlayPrefix(ACommandManager __instance)
+            //[HarmonyPrefix, HarmonyPatch("OnBuildImprovementPickerButtonPressed")]
+            public static void OnBuildImprovementPickerButtonPressedPrefix(ABuilderButtonPanel __instance)
             {
-                //Main.logger.LogDebug("CommandUpgradeUnit " + __instance);
-                //DebugMessage.instance.ShowMessage("CommandUpgradeUnit " + __instance);
-                return !Editor.mouseCursorOnEditorWindow;
+                DebugMessage.instance.ShowMessage("OnBuildImprovementPickerButtonPressed");
             }
         }
 
@@ -200,11 +193,11 @@ namespace Ingame_Editor
             [HarmonyPrefix, HarmonyPatch("OnCardButtonPressed")]
             public static bool PlayPrefix(AActionPanel __instance, ACard c)
             { // unit panel buttons
-                Main.logger.LogDebug("OnCardButtonPressed " + c.ID);
+                //Main.logger.LogDebug("OnCardButtonPressed " + c.ID);
                 //DebugMessage.instance.ShowMessage("CommandPlayCardInternal " + __instance.ID);
                 return !Editor.mouseCursorOnEditorWindow;
             }
-            [HarmonyPrefix, HarmonyPatch("OnTileActionButtonPressed")]
+            //[HarmonyPrefix, HarmonyPatch("OnTileActionButtonPressed")]
             public static void OnTileActionButtonPressedPrefix(AActionPanel __instance, string tileActionText)
             {
                 Main.logger.LogDebug("AActionPanel OnTileActionButtonPressed " + tileActionText);
@@ -248,6 +241,7 @@ namespace Ingame_Editor
                 return !Editor.mouseCursorOnEditorWindow;
             }
         }
+
 
 
 

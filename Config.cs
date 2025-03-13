@@ -10,26 +10,31 @@ namespace Ingame_Editor
     internal class Config
     {
         public static ConfigEntry<float> editorUIscale;
-        public static ConfigEntry<bool> tileGoodsCheck;
         public static ConfigEntry<bool> enableConsole;
         public static ConfigEntry<bool> showGameDataVarsInTooltip;
-        public static ConfigEntry<bool> landmarkCheck;
         public static ConfigEntry<bool> showTileCoordInTooltip;
-        public static ConfigEntry<KeyCode> hotkey;
+        public static ConfigEntry<bool> showUnitIDinTooltip;
+        public static ConfigEntry<KeyCode> editorHotkey;
 
 
         public static void Bind()
         {
             editorUIscale = Main.config.Bind("", "Editor UI scale", 1f);
-            tileGoodsCheck = Main.config.Bind("", "Check if tile goods are valid for tile and player when placing them", true);
-            landmarkCheck = Main.config.Bind("", "Check if landmark is valid for tile when placing it", true);
             enableConsole = Main.config.Bind("", "Enable developer console", true);
             enableConsole.SettingChanged += EnableConsoleChanged;
             showTileCoordInTooltip = Main.config.Bind("", "Show tile coordinates in tooltip", false);
+            showUnitIDinTooltip = Main.config.Bind("", "Show unit ID in tooltip", false);
+            showUnitIDinTooltip.SettingChanged += showUnitIDinTooltipChanged;
             showGameDataVarsInTooltip = Main.config.Bind("", "Show GameData variables in tooltip", false);
             showGameDataVarsInTooltip.SettingChanged += ShowGameDataVarsInTooltipChanged;
-            hotkey = Main.config.Bind("", "Editor window hotkey", KeyCode.F5);
+            editorHotkey = Main.config.Bind("", "Editor window hotkey", KeyCode.F5);
 
+        }
+
+        private static void showUnitIDinTooltipChanged(object sender, EventArgs e)
+        {
+            ADevConfig.ShowDebugUnitID = showUnitIDinTooltip.Value;
+            //Main.logger.LogDebug("OnEnableConsoleChanged " + ADevConfig.EnableConsole);
         }
 
         private static void EnableConsoleChanged(object sender, EventArgs e)

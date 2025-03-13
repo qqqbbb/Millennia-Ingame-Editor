@@ -6,63 +6,63 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using UnityEngine;
+using UnityEngine.UI;
+using Color = UnityEngine.Color;
+
 
 namespace Ingame_Editor
 {
     internal class Editor : MonoBehaviour
-    //CreateCardFlyoff
     {
         private const int buttonFontSize = 16;
         private const int labelFontSize = 20;
-        public static bool showingWindow;
+        public static bool showingEditorWindow;
         public static bool mouseCursorOnEditorWindow;
-        public APlayer playerToEdit;
+        static APlayer playerToEdit;
+        static APlayer currentPlayer;
         public ADomainManager domainManager;
         public AGameData gameData;
         private Rect windowRect = new Rect(0, Screen.height - 675, 750f, 600f);
-        private int topMenuIndex;
-        private string[] topMenuButtonNames = new string[5] { "Player", "City", "Units", "Map tile", "Select player" };
-
-        enum TopMenu
-        {
-            Player,
-            City,
-            Units,
-            Map,
-            SelectPlayer
-        }
-
-        private string[] playerNames;
+        enum TopMenu { Player, City, Units, Map, CreateUnit }
+        enum SubMenu { None, Unit, Terrain, Goods, Landmark, SelectPlayer, nextAge }
+        static TopMenu openMenu;
+        static SubMenu openSubMenu;
         static public ALocation selectedLoc;
         static public AEntityTile selectedTile;
         public static ACity selectedCity;
-        private static bool selectedLocValidForLandmarks;
+        private static bool selectedLocValidForLandmark;
         public static List<AEntityCharacter> selectedUnits;
-        private float scale = 1.0f;
+        private float scale = 1f;
         private bool setupDone;
         Dictionary<string, string> terrains = new Dictionary<string, string> { { "TT_GRASSLAND_SNOW", "Frozen Grassland" }, { "TT_SCRUBLAND_SNOW", "Frozen Scrubland" }, { "TT_HILLS_SNOW", "Frozen Hills" }, { "TT_DESERT_SNOW", "Frozen Desert" }, { "TT_HILLS_WASTELAND", "Wasteland Hills" } };
         static Dictionary<string, string> goods = new Dictionary<string, string>();
         int windowID = Main.PLUGIN_GUID.GetHashCode();
         Color selectColor = new Color(.5f, .5f, 1f);
-        int selectedTerrainIndex;
         int availableReources;
         Texture2D selectedTexture;
         GUIStyle buttonStyle;
         GUIStyle labelStyle;
         GUIStyle selectedButtonStyle;
         List<AEntityInfo> unitList;
-        static Dictionary<string, string> landmarks;
-
-        //readonly string[] militaryLandUnitTags = { "TypeLine", "TypeMobile", "TypeRanged", "TypeSiege", "TypeCommando" };
-        //readonly string[] civilLandUnitTags = { "NonCombatant", "TypeSettler" };                     
-        readonly string[] militaryNavalUnitTags = { "CombatType:CT_Warship", "CombatType:CT_Attackship", "CombatType:CT_Capship" };
+        static Dictionary<string, string> landmarks = new Dictionary<string, string>();
+        static List<string> validLandmarks = new List<string>();
+        readonly string[] militaryNavalUnitTags = { "CombatType:CT_Warship", "CombatType:CT_Attackship", "CombatType:CT_Capship", "TypeCarrier" };
         readonly string[] civilNavalUnitTags = { "UtilityShip", "TypeSettler" };
-        static bool terrainChoice;
-        static bool goodsChoice;
-        static int numValidResources;
-        static bool unitChoice;
         static Vector2 scrollPosition;
-        static bool landMarkChoice;
+        static AGameData cityData;
+        private static bool neutralTownSelected;
+        private GUIStyle defaultLabelStyle;
+        private GUIStyle defaultButtonStyle;
+        private int defaultButtonFontSize;
+        private Color defaultBackgroundColor;
+        static bool goodsPlayerCheck = true;
+        private bool goodsTerrainCheck = true;
+        private Dictionary<string, string> nameOverrides = new Dictionary<string, string> { { "UNIT_DEBUGSCOUT", "Debug scout" } };
+        private bool landMarkCheck;
+        private static APlayer selectedUnitOwner;
+        private bool landmarksRevealed;
+        private bool rewardCampsRevealed;
+        List<ACard> advanceAges;
 
         private void Setup()
         {
@@ -71,16 +71,12 @@ namespace Ingame_Editor
                 Destroy(this);
                 return;
             }
-            ADevConfig.EnableConsole = Config.enableConsole.Value;
+            currentPlayer = AGame.Instance.CurrPlayer;
+            //ADevConfig.EnableConsole = Config.enableConsole.Value;
             selectedTexture = Util.MakeTexture(2, 2, selectColor);
-            List<AEntityInfo> resources = AEntityInfoManager.Instance.GetAllWithTag(AEntityTile.cBonusTile);
-            foreach (var info in resources)
+            List<AEntityInfo> goodsInfos = AEntityInfoManager.Instance.GetAllWithTag(AEntityTile.cBonusTile);
+            foreach (var info in goodsInfos)
             {
-                //string type = info.ID;
-                //StringBuilder sb = new StringBuilder();
-                //foreach (var s in info.Tags)
-                //    sb.Append(s + ' ');
-                //Main.logger.LogInfo("" + type + " " + sb.ToString());
                 if (info.ID.Contains("BASE") == false)
                 {
                     string name = AGame.Instance.GetEntityTypeDisplayName(info.ID);
@@ -89,14 +85,11 @@ namespace Ingame_Editor
             }
             foreach (string id in AMapController.Instance.TerrainTypes.Keys)
             {
-                //Main.logger.LogInfo("TerrainTypes " + id);
                 if (terrains.ContainsKey(id))
                     continue;
 
                 string name = AGame.Instance.GetTerrainTypeDisplayName(id);
                 terrains[id] = name;
-                //terrainTypeIDs.Add(key);
-                //terrainTypeNames.Add(name);
             }
             setupDone = true;
         }
@@ -109,144 +102,182 @@ namespace Ingame_Editor
             if (setupDone == false)
                 Setup();
 
-            if (Input.GetKeyDown(Config.hotkey.Value))
+            if (Input.GetKeyDown(Config.editorHotkey.Value))
             {
-                if (showingWindow)
-                    CloseWindow();
+                if (showingEditorWindow)
+                    CloseEditorWindow();
                 else
-                    OpenWindow();
+                    OpenEditorWindow();
             }
-            if (showingWindow)
+            if (showingEditorWindow)
             {
                 if (Input.GetKeyDown(KeyCode.Escape))
-                    CloseWindow();
+                {
+                    if (IsSubmenuOpen())
+                        CloseSubmenu();
+                    else
+                        CloseEditorWindow();
+                }
             }
         }
 
-        private void OpenWindow()
+        static void OpenMenu(TopMenu topMenu)
         {
+            openMenu = topMenu;
+            CloseSubmenu();
+        }
+
+        private void OpenSubMenu(SubMenu subMenu)
+        {
+            scrollPosition = Vector2.zero;
+            openSubMenu = subMenu;
+        }
+
+        private void OpenEditorWindow()
+        {
+            OpenMenu(TopMenu.Player);
             playerToEdit = AGame.Instance.CurrPlayer;
             gameData = playerToEdit.GetComponent<AGameData>();
             domainManager = playerToEdit.GetComponent<ADomainManager>();
-            showingWindow = true;
+            GetAdvanceAges();
+            showingEditorWindow = true;
         }
 
-        private void CloseWindow()
+        private void GetAdvanceAges()
         {
+            int ageNumber = playerToEdit.GetAgeNumber();
+            ACard baseTech = ATechManager.Instance.GetBaseTechFromChosenAge(ageNumber);
+            advanceAges = ATechManager.Instance.GetPossibleAgesFrom(baseTech);
+        }
+
+        public static void CloseEditorWindow()
+        {
+            CloseSubmenu();
             mouseCursorOnEditorWindow = false;
-            CloseSubmenus();
-            showingWindow = false;
+            showingEditorWindow = false;
         }
 
         public static void SelectLocation(ALocation loc)
         {
-            Main.logger.LogInfo("SelectLocation " + loc);
-            CloseSubmenus();
+            //Main.logger.LogInfo("SelectLocation " + loc);
+            CloseSubmenu();
             selectedLoc = loc;
             selectedUnits = null;
             selectedCity = null;
-            selectedLocValidForLandmarks = ALandmarkManager.Instance.IsLocationValidForLandmarks(selectedLoc, false);
-            selectedUnits = selectedLoc.GetUnits(AGame.cUnitLayerNormal);
-            numValidResources = GetNumValidGoods(selectedLoc);
+            neutralTownSelected = false;
+            selectedLocValidForLandmark = ALandmarkManager.Instance.IsLocationValidForLandmarks(selectedLoc, false);
+            //selectedLocValidForLandmark = Util.IsLocationValidForLandmarks(selectedLoc, false);
+            selectedUnits = selectedLoc.GetUnits(AGame.cUnitLayerAll);
+            selectedUnitOwner = null;
+            if (selectedUnits.Count == 0)
+            {
+                if (openMenu == TopMenu.Units)
+                    OpenMenu(TopMenu.Map);
+            }
+            else
+            {
+                selectedUnitOwner = selectedUnits[0].GetPlayer();
+                if (openMenu == TopMenu.CreateUnit && CanCreateUnit() == false)
+                    OpenMenu(TopMenu.Units);
+            }
             selectedTile = selectedLoc.GetTile();
-            if (selectedTile)
-                Main.logger.LogDebug("SelectLocation " + selectedTile.TypeID);
+            if (selectedTile == null)
+                return;
 
-            if (selectedTile && selectedTile.IsCity(false))
+            //Main.logger.LogDebug("SelectLocation tile ID " + selectedTile.TypeID);
+            //Main.logger.LogDebug("SelectLocation tile Tags ");
+            //foreach (var tag in selectedTile.TagDict.Tags)
+            //    Main.logger.LogDebug(tag);
+
+            neutralTownSelected = selectedTile.HasTag(AEntityTile.cTagNeutralTown);
+            if (selectedTile.IsCity(false))
+            {
                 selectedCity = selectedTile.GetCity();
+                cityData = selectedCity.GetComponent<AGameData>();
+            }
         }
 
         public static void ClearSelection()
         {
-            if (unitChoice)
+            if (openSubMenu == SubMenu.Unit)
                 return;
 
-            Main.logger.LogInfo("ClearSelection ");
             selectedCity = null;
             selectedUnits = null;
+            selectedUnitOwner = null;
             selectedLoc = null;
             selectedTile = null;
-            CloseSubmenus();
+            CloseSubmenu();
         }
 
-        private static void CloseSubmenus()
+        private static void CloseSubmenu()
         {
-            terrainChoice = false;
-            goodsChoice = false;
-            unitChoice = false;
-            landMarkChoice = false;
+            openSubMenu = SubMenu.None;
             scrollPosition = Vector2.zero;
+        }
+
+        private static bool IsSubmenuOpen()
+        {
+            return openSubMenu != SubMenu.None;
         }
 
         private void OnGUI()
         {
-            if (showingWindow == false)
+            if (showingEditorWindow == false)
                 return;
 
-            if (buttonStyle == null)
-            {
-                buttonStyle = new GUIStyle(GUI.skin.button);
-                selectedButtonStyle = new GUIStyle(buttonStyle);
-                //buttonStyle.fontSize = Mathf.RoundToInt(buttonFontSize * scale);
-                //selectedButtonStyle.fontSize = Mathf.RoundToInt(buttonFontSize * 2 * scale);
-                //selectedGridStyle.fontSize = Mathf.RoundToInt(16 * scale);
-                buttonStyle.normal.textColor = Color.white;
-                labelStyle = new GUIStyle(GUI.skin.label);
-                labelStyle.normal.textColor = Color.black;
-                labelStyle.fontSize = Mathf.RoundToInt(labelFontSize * scale);
-                selectedButtonStyle.normal.textColor = Color.white;
-                selectedButtonStyle.normal.background = selectedTexture;
-                selectedButtonStyle.hover.background = selectedTexture;
-                selectedButtonStyle.fontSize = Mathf.RoundToInt(buttonFontSize * scale);
+            if (selectedButtonStyle == null)
+                SetStyles();
 
-            }
             scale = Config.editorUIscale.Value;
             float scaledWidth = 750f * scale;
             float scaledHeight = 600f * scale;
-            //windowRect = new Rect(0, Screen.height - 675, 750f, 600f);
-            //windowRect = new Rect(0, Screen.height - (675 * scale), 750f * scale, 600f * scale);
             windowRect = new Rect(0, Screen.height - scaledHeight, scaledWidth, scaledHeight);
             windowRect = GUI.Window(windowID, windowRect, DrawEditorWindow, "");
             mouseCursorOnEditorWindow = windowRect.Contains(Event.current.mousePosition);
-            if (mouseCursorOnEditorWindow)
-            {
-                //ATooltipController.Instance.ClearAllTooltips();
-            }
+            GUI.backgroundColor = defaultBackgroundColor;
+            //if (mouseCursorOnEditorWindow)
+            //ATooltipController.Instance.ClearAllTooltips();
         }
 
-        public void DrawEditorWindow(int winId)
+        private void SetStyles()
         {
-            //GUI.skin.label.fontStyle.
-            //GUI.contentColor = Color.black;
+            defaultLabelStyle = GUI.skin.label;
+            defaultButtonFontSize = GUI.skin.button.fontSize;
+            defaultBackgroundColor = GUI.backgroundColor;
+            selectedButtonStyle = new GUIStyle(GUI.skin.button);
+            labelStyle = new GUIStyle(GUI.skin.label);
+            buttonStyle = new GUIStyle(GUI.skin.button);
+            labelStyle.normal.textColor = Color.black;
+            selectedButtonStyle.normal.textColor = Color.white;
+            selectedButtonStyle.normal.background = selectedTexture;
+            selectedButtonStyle.hover.background = selectedTexture;
+        }
+
+        public void DrawEditorWindow(int windowId)
+        {
             labelStyle.fontSize = Mathf.RoundToInt(labelFontSize * scale);
-            GUI.skin.label = labelStyle;
-            float scaledWidth = 750f * scale;
-            //GUI.backgroundColor
-            GUI.skin.button.fontSize = Mathf.RoundToInt(buttonFontSize * scale);
-            buttonStyle.fontSize = Mathf.RoundToInt(buttonFontSize * scale);
-            selectedButtonStyle.fontSize = Mathf.RoundToInt(buttonFontSize * scale);
+            int fontSize = Mathf.RoundToInt(buttonFontSize * scale);
+            buttonStyle.fontSize = fontSize;
+            selectedButtonStyle.fontSize = fontSize;
             GUILayout.BeginArea(new Rect(10f * scale, 20f * scale, 720f * scale, 570f * scale));
             DrawTopMenu();
-            if (topMenuIndex == 0)
-            {
+            if (openMenu == TopMenu.Player)
                 DrawPlayerMenu();
-            }
-            else if (topMenuIndex == 1 && selectedCity)
+            else if (openMenu == TopMenu.City)
             {
-                DrawCityMenu();
+                if (selectedCity)
+                    DrawCityMenu();
+                else if (neutralTownSelected)
+                    DrawNeutralTownMenu();
             }
-            else if (topMenuIndex == 2)
-            {
+            else if (openMenu == TopMenu.Units)
                 DrawUnitMenu();
-            }
-            else if (topMenuIndex == 3)
-            {
+            else if (openMenu == TopMenu.Map)
                 DrawTileMenu();
-            }
-            else if (topMenuIndex == 4)
-            {
-                DrawPlayerChoiceMenu();
-            }
+            else if (openMenu == TopMenu.CreateUnit)
+                DrawCreateUnitMenu();
+
             if (GUI.changed)
                 AGame.Instance.SetIsCheating();
 
@@ -256,162 +287,266 @@ namespace Ingame_Editor
         private void DrawTopMenu()
         {
             GUILayout.BeginHorizontal();
-            for (int i = 0; i < topMenuButtonNames.Length; i++)
+            foreach (TopMenu topMenu in Enum.GetValues(typeof(TopMenu)))
             {
-                string buttonName = topMenuButtonNames[i];
-                if (selectedCity == null && buttonName == "City")
+                if (selectedLoc == null)
                 {
-                    continue;
+                    if (topMenu == TopMenu.City || topMenu == TopMenu.Map || topMenu == TopMenu.CreateUnit)
+                        continue;
                 }
-                else if ((selectedUnits == null || selectedUnits.Count == 0) && buttonName == "Units")
+                if (topMenu == TopMenu.City && selectedCity == null && neutralTownSelected == false)
                 {
-                    continue;
-                }
-                else if (selectedLoc == null && buttonName == "Map tile")
-                {
-                    continue;
-                }
-                GUIStyle style = buttonStyle;
-                if (i == topMenuIndex)
-                {
-                    style = selectedButtonStyle;
-                    GUI.backgroundColor = selectColor;
-                }
-                else
-                    GUI.backgroundColor = Color.black;
+                    if (openMenu == TopMenu.City)
+                        OpenMenu(TopMenu.Player);
 
-                //buttonStyle.fontSize = Mathf.RoundToInt(buttonFontSize * scale);
-                if (GUILayout.Button(buttonName, style))
-                {
-                    topMenuIndex = i;
-                    CloseSubmenus();
+                    continue;
                 }
+                else if (topMenu == TopMenu.Units && (selectedUnits == null || selectedUnits.Count == 0))
+                    continue;
+                else if (topMenu == TopMenu.CreateUnit)
+                {
+                    if (CanCreateUnit() == false)
+                    {
+                        if (openMenu == TopMenu.CreateUnit)
+                            OpenMenu(TopMenu.Map);
+
+                        continue;
+                    }
+                }
+                string buttonName = topMenu.ToString();
+                if (topMenu == TopMenu.CreateUnit)
+                    buttonName = "Create unit";
+                else if (topMenu == TopMenu.Map)
+                    buttonName = "Map tile";
+
+                GUI.backgroundColor = Color.black;
+                if (topMenu == openMenu)
+                {
+                    if (DrawSelectedButton(buttonName))
+                        OpenMenu(topMenu);
+                }
+                else if (GUILayout.Button(buttonName, buttonStyle))
+                    OpenMenu(topMenu);
             }
             GUILayout.EndHorizontal();
+        }
 
+        private bool DrawSelectedButton(string text)
+        {
+            GUI.backgroundColor = selectColor;
+            bool clicked = GUILayout.Button(text, selectedButtonStyle);
+            GUI.backgroundColor = Color.black;
+            return clicked;
+        }
+
+        private bool DrawSelectedButtonRightSide(string text)
+        {
+            GUI.backgroundColor = selectColor;
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            float scaledWidth = 365f * Config.editorUIscale.Value;
+            bool clicked = GUILayout.Button(text, selectedButtonStyle, GUILayout.Width(scaledWidth));
+            GUILayout.EndHorizontal();
+            GUI.backgroundColor = Color.black;
+            return clicked;
+        }
+
+        private static bool CanCreateUnit()
+        {
+            if (selectedLoc.GetIsRevealed(currentPlayer.PlayerNum) == false)
+                return false;
+
+            int playerToCheck = GetPlayerIDforCreateUnitMenu();
+            return selectedLoc.HasSpaceFor(1, playerToCheck, AGame.cUnitLayerNormal) || selectedLoc.HasSpaceFor(1, playerToCheck, AGame.cUnitLayerAir);
         }
 
         private void DrawPlayerMenu()
         {
-            DrawLabelRightSide("Player to edit: " + playerToEdit.GetNationName());
             GUILayout.Label("");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Wealth +1000"))
+            GUILayout.Label("Player to edit: " + playerToEdit.GetNationName(), labelStyle);
+            if (GUILayout.Button("Select another player", buttonStyle))
+                OpenSubMenu(SubMenu.SelectPlayer);
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("");
+            if (openSubMenu == SubMenu.SelectPlayer)
             {
+                ShowPlayerChoiceMenu();
+                return;
+            }
+            else if (openSubMenu == SubMenu.nextAge)
+            {
+                ShowAdvanceAgeMenu();
+                return;
+            }
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Wealth +1000", buttonStyle))
                 gameData.AdjustBaseValueCapped(APlayer.cResCoin, 1000f, false);
-            }
-            if (GUILayout.Button("Culture +100"))
-            {
-                gameData.AdjustBaseValueCapped(APlayer.cResCulture, 100f, false);
-                //gameData.GetFloatValue(APlayer.cCultureNeeded);
-            }
-            //if (GUILayout.Button("Knowledge +100"))
-            //{
-            //    gameData.AdjustBaseValueCapped(APlayer.cResKnowledge, 100f, false);
-            //    playerToEdit.ApplyKnowledge();
-            //}
-            if (GUILayout.Button("Improvement points +100"))
-            {
+            else if (GUILayout.Button("Improvement points +100", buttonStyle))
                 gameData.AdjustBaseValueCapped(APlayer.cResImprovementPoints, 100f, false);
-            }
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Specialists +100"))
-            {
+            else if (GUILayout.Button("Specialists +100", buttonStyle))
                 gameData.AdjustBaseValueCapped(APlayer.cResSpecialists, 100f, false);
-            }
-            if (GUILayout.Button("Innovation per turn +100"))
-            {
-                gameData.AdjustBaseValueCapped(APlayer.cResInnovation + AGame.cPerTurnSuffix, 100f, false);
-            }
-            if (GUILayout.Button("Chaos per turn -100"))
-            {
-                gameData.AdjustBaseValueCapped(APlayer.cResChaos + AGame.cPerTurnSuffix, -100f, false);
-            }
-            if (GUILayout.Button("Innovation +100"))
-            {
-                gameData.AdjustBaseValueCapped(APlayer.cResInnovation, 100f, false);
-            }
+
             GUILayout.EndHorizontal();
+            GUILayout.Label("");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Chaos -100"))
-            {
+            //if (GUILayout.Button("Innovation per turn +100"))
+            //    gameData.AdjustBaseValueCapped(APlayer.cResInnovation + AGame.cPerTurnSuffix, 100f, false);
+            //if (GUILayout.Button("Chaos per turn -100"))
+            //    gameData.AdjustBaseValueCapped(APlayer.cResChaos + AGame.cPerTurnSuffix, -100f, false);
+            if (GUILayout.Button("Innovation +100", buttonStyle))
+                gameData.AdjustBaseValueCapped(APlayer.cResInnovation, 100f, false);
+            else if (GUILayout.Button("Chaos -100", buttonStyle))
                 gameData.AdjustBaseValueCapped(APlayer.cResChaos, -100f, false);
-            }
-            if (GUILayout.Button("Chaos +100"))
-            {
+            else if (GUILayout.Button("Chaos +100", buttonStyle))
                 gameData.AdjustBaseValueCapped(APlayer.cResChaos, 100f, false);
-            }
-            if (GUILayout.Button("Government xp +100"))
-            {
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Government xp +100", buttonStyle))
                 gameData.AdjustBaseValue(ADomainManager.cResDomainXPGovernment, 100f, false);
-            }
-            if (GUILayout.Button("Exploration xp +100"))
+            else if (GUILayout.Button("Exploration xp +100", buttonStyle))
             {
-                //AGame.cGameDataResourcePrefix + ADomainManager.cDomainExploration
                 gameData.AdjustBaseValue(domainManager.GetDomainXPKey(ADomainManager.cDomainExploration), 100f, false);
-                //data.SetBaseValueAsBool("DomainUnlock-DomainExploration", true);
                 gameData.SetBaseValueAsBool(domainManager.GetDomainUnlockKey(ADomainManager.cDomainExploration), true);
             }
-            GUILayout.EndHorizontal();
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Warfare xp +100"))
+            else if (GUILayout.Button("Warfare xp +100", buttonStyle))
             {
                 gameData.AdjustBaseValue(domainManager.GetDomainXPKey(ADomainManager.cDomainWarfare), 100f, false);
-                //gameData.SetBaseValueAsBool(ADomainManager.cDomainUnlock + ADomainManager.cDomainWarfare, true);
                 gameData.SetBaseValueAsBool(domainManager.GetDomainUnlockKey(ADomainManager.cDomainWarfare), true);
             }
-            if (GUILayout.Button("Engineering xp +100"))
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Engineering xp +100", buttonStyle))
             {
                 gameData.AdjustBaseValue(domainManager.GetDomainXPKey(ADomainManager.cDomainEngineering), 100f, false);
-                //gameData.SetBaseValueAsBool(ADomainManager.cDomainUnlock + ADomainManager.cDomainEngineering, true);
                 gameData.SetBaseValueAsBool(domainManager.GetDomainUnlockKey(ADomainManager.cDomainEngineering), true);
             }
-            if (GUILayout.Button("Diplomacy xp +100"))
+            else if (GUILayout.Button("Diplomacy xp +100", buttonStyle))
             {
                 gameData.AdjustBaseValue(domainManager.GetDomainXPKey(ADomainManager.cDomainDiplomacy), 100f, false);
-                //gameData.AdjustBaseValue(AGame.cGameDataResourcePrefix + ADomainManager.cDomainDiplomacy, 100f, false);
-                //gameData.SetBaseValueAsBool(ADomainManager.cDomainUnlock + ADomainManager.cDomainDiplomacy, true);
                 gameData.SetBaseValueAsBool(domainManager.GetDomainUnlockKey(ADomainManager.cDomainDiplomacy), true);
             }
-            if (GUILayout.Button("Arts xp +100"))
+            else if (GUILayout.Button("Arts xp +100", buttonStyle))
             {
-                //gameData.AdjustBaseValue(AGame.cGameDataResourcePrefix + ADomainManager.cDomainArts, 100f, false);
                 gameData.AdjustBaseValue(domainManager.GetDomainXPKey(ADomainManager.cDomainArts), 100f, false);
-                //this.gameData.SetBaseValueAsBool(ADomainManager.cDomainUnlock + ADomainManager.cDomainArts, true);
                 gameData.SetBaseValueAsBool(domainManager.GetDomainUnlockKey(ADomainManager.cDomainArts), true);
             }
             GUILayout.EndHorizontal();
             ACard currentTech = playerToEdit.GetCurrentTech();
-            if (currentTech != null)
+            if (playerToEdit.GetCultureMeterFrac() < 1)
             {
                 GUILayout.Label("");
-                if (GUILayout.Button("Finish researching " + currentTech.GetCardTitle()))
-                    playerToEdit.SetResearched(currentTech.ID);
+                if (playerToEdit.GetCultureMeterFrac() < 1 && DrawButtonlRightSide("Fill culture meter"))
+                    gameData.SetBaseValue(APlayer.cResCulture, playerToEdit.GetCultureMeterMax());
             }
-            //float cultureMeterMax = playerToEdit.GetCultureMeterMax();
-            //if (GUILayout.Button("cultureMeterMax " + cultureMeterMax))
-            //    playerToEdit.SetResearched(currentTech.ID);
-
-            GUILayout.Label("");
-            if (GUILayout.Button("Reveal all landmarks"))
+            if (currentTech != null)
             {
-                ACard card = ACard.FindFromText("EXPLORERS-LANDMARKS");
-                card.Play(null, null, playerToEdit);
+                float meterFraction = playerToEdit.GetTechProgress(currentTech, out int numTurns, out float techPerTurn, out float projFrac);
+                if (projFrac < 1)
+                {
+                    GUILayout.Label("");
+                    if (DrawButtonlRightSide("Finish researching " + currentTech.GetCardTitle()))
+                        playerToEdit.SetResearched(currentTech.ID);
+                }
             }
-            if (GUILayout.Button("Reveal all tribal camps"))
+            if (advanceAges.Count > 0)
             {
-                ACard card = ACard.FindFromText("EXPLORERS-LANDMARKS");
-                card.Choices[0].Effects[0].Target = "ENTTAG,ALLPLAYERS-" + AEntityTile.cTagRewardCamp;
-                card.Play(null, null, playerToEdit);
+                GUILayout.Label("");
+                if (advanceAges.Count == 1)
+                {
+                    ACard nextAge = advanceAges[0];
+                    if (DrawButtonlRightSide("Advance to " + Util.GetAgeName(nextAge)))
+                        AdvanceToAge(nextAge);
+                }
+                else if (DrawButtonlRightSide("Advance to next age"))
+                    OpenSubMenu(SubMenu.nextAge);
             }
-            if (GUILayout.Button("Reveal entire map"))
-            {
-                AMapController.Instance.RevealFog(true);
-            }
+            //UnrestButtons();
             if (GUI.changed)
-            {
                 AUIManager.Instance.RefreshAllPanels(UIRefreshType.cUIRefreshAll);
+        }
+
+
+
+        private void ShowAdvanceAgeMenu()
+        {
+            GUILayout.Label("");
+            foreach (var age in advanceAges)
+            {
+                if (DrawButtonlRightSide(Util.GetAgeName(age)))
+                    AdvanceToAge(age);
+            }
+        }
+
+        private void AdvanceToAge(ACard age)
+        {
+            Main.logger.LogMessage("AdvanceToAge " + age.ID);
+            CloseEditorWindow();
+            ACard baseTechFromAge = ATechManager.Instance.GetBaseTechFromAge(playerToEdit.GetAge());
+            List<ACard> ageTechs = ATechManager.Instance.GetAllTechsFromAge(baseTechFromAge, filterSubtype: CardSubtype.CST_Tech);
+            foreach (var tech in ageTechs)
+            {
+                bool valid = false;
+                if (tech.CardTags.HasTag(ATechManager.cCardTagAgeAdvance))
+                {
+                    if (tech == age)
+                        valid = true;
+                }
+                else
+                    valid = true;
+
+                if (valid)
+                {
+                    Main.logger.LogMessage("SetResearched " + tech.ID);
+                    playerToEdit.SetResearched(tech.ID);
+                }
+            }
+            GetAdvanceAges();
+        }
+
+        private void UnrestButtons()
+        {
+            bool unrestDisabled = gameData.GetFloatValueAsBool(ACity.cDisableUnrest);
+            if (unrestDisabled)
+            {
+                if (GUILayout.Button("Enable population unrest"))
+                    gameData.SetBaseValueAsBool(ACity.cDisableUnrest, false);
+            }
+            else
+            {
+                if (GUILayout.Button("Disable population unrest"))
+                    gameData.SetBaseValueAsBool(ACity.cDisableUnrest, true);
+            }
+        }
+
+        private void DrawNeutralTownMenu()
+        {
+            GUILayout.Label("");
+            DrawLabelRightSide(selectedTile.GetDisplayName());
+
+            if (openSubMenu == SubMenu.SelectPlayer)
+            {
+                ShowPlayerChoiceMenu();
+                return;
+            }
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Give ownership to " + playerToEdit.GetNationName(), buttonStyle))
+            {
+                AMapController.Instance.ExecuteIntegration(selectedTile, playerToEdit.PlayerNum, true, true, AVassalConversionType.VCT_Envoy);
+                SelectLocation(selectedLoc);
+            }
+            if (GUILayout.Button("Select another player", buttonStyle))
+                OpenSubMenu(SubMenu.SelectPlayer);
+
+            GUILayout.EndHorizontal();
+            GUILayout.Label("");
+            if (GUILayout.Button("Destroy the city", buttonStyle))
+            {
+                selectedTile.DestroyEntity(false);
+                OpenMenu(TopMenu.Map);
             }
         }
 
@@ -420,20 +555,62 @@ namespace Ingame_Editor
             GUILayout.Label("");
             DrawLabelRightSide(selectedCity.GetDisplayName());
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("+1 " + AStringTable.Instance.GetString("UI-CityFrame-PopulationLabel")))
+            string pop = AStringTable.Instance.GetString("UI-CityFrame-PopulationLabel");
+            if (selectedCity.GetPopulation(false) > selectedCity.GetMinimumPopulation())
+            {
+                if (GUILayout.Button("-1 " + pop, buttonStyle))
+                    selectedCity.KillPopulation(1, false);
+            }
+            if (GUILayout.Button("+1 " + pop, buttonStyle))
                 selectedCity.AddPopulation(1);
 
-            if (!selectedCity.PrimaryProductionQueue.IsEmpty() && GUILayout.Button("Finish production"))
+            GUILayout.EndHorizontal();
+            if (selectedCity.PrimaryProductionQueue.IsEmpty() == false)
             {
-                selectedCity.PrimaryProductionQueue.UseProductionPoints(99999f, selectedCity.GetComponent<AGameData>(), out float _);
+                AProductionQueue prodQueue = selectedCity.PrimaryProductionQueue;
+                AEntityInfo entityInfo = prodQueue.GetEntityInfoForQueueItem(0);
+                bool project = entityInfo.HasTag(ACity.cTagCityProject);
+                if (project == false)
+                {
+                    GUILayout.Label("");
+                    if (DrawButtonlRightSide("Finish " + entityInfo.GetDisplayName(selectedCity.GetPlayer())))
+                    {
+                        prodQueue.GetProductionProgress(out float prodPts, out float prodPtsNeeded, out _, out _);
+                        prodQueue.UseProductionPoints(prodPtsNeeded - prodPts, cityData, out _);
+                    }
+                }
             }
-            if (selectedCity.IsVassal() && GUILayout.Button("Integrate vassal"))
+            if (selectedCity.IsVassal() && DrawButtonlRightSide("Integrate vassal"))
             {
                 selectedCity.IntegrateVassal();
-                //AGameData gameData = selectedCity.GetComponent<AGameData>();
-                //gameData.SetBaseValue(ACity.cStatVassalIntegration, gameData.GetFloatValue(ACity.cStatVassalIntegrationNeeded, 0), true);
             }
+            float unrest = cityData.GetFloatValue(ACity.cStatUnrest);
+            if (unrest > 0 && DrawButtonlRightSide("Remove unrest"))
+            {
+                cityData.SetBaseValue(ACity.cStatUnrest, 0);
+            }
+            if (openSubMenu == SubMenu.SelectPlayer)
+            {
+                ShowPlayerChoiceMenu();
+                return;
+            }
+            GUILayout.Label("");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Give ownership to " + playerToEdit.GetNationName(), buttonStyle))
+            {
+                selectedCity.ConvertRegion(playerToEdit.PlayerNum, true, AVassalConversionType.VCT_Settler);
+                SelectLocation(selectedLoc);
+            }
+            if (GUILayout.Button("Select another player", buttonStyle))
+                OpenSubMenu(SubMenu.SelectPlayer);
+
             GUILayout.EndHorizontal();
+            GUILayout.Label("");
+            if (DrawButtonlRightSide("Destroy the city"))
+            {
+                selectedTile.DestroyEntity(false);
+                OpenMenu(TopMenu.Map);
+            }
         }
 
         private void DrawUnitMenu()
@@ -442,24 +619,76 @@ namespace Ingame_Editor
                 return;
 
             GUILayout.Label("");
+            bool deletedUnit = false;
+            float scaledHeight = 600f * Config.editorUIscale.Value;
+            scrollPosition = GUILayout.BeginScrollView(scrollPosition, GUILayout.Height(scaledHeight * .85f));
             foreach (var unit in selectedUnits)
             {
-                DrawLabelRightSide(unit.GetDisplayName());
+                string name = unit.GetDisplayName();
+                if (nameOverrides.ContainsKey(unit.TypeID))
+                    name = nameOverrides[unit.TypeID];
+
+                DrawLabelRightSide(name);
                 GUILayout.BeginHorizontal();
-                if (GUILayout.Button("Restore HP"))
+                if (GUILayout.Button("Delete unit", buttonStyle))
                 {
-                    unit.HealStatFrac(AEntityCharacter.cStatHealth, 1f);
-                    unit.HealStatFrac(AEntityCharacter.cStatCommand, 1f);
-                }
-                if (GUILayout.Button("Restore movement points"))
-                {
-                    unit.HealStatFrac(AEntityCharacter.cStatMovement, 1f);
-                }
-                if (GUILayout.Button("Delete unit"))
                     unit.DestroyEntity(false, false, false, false);
+                    deletedUnit = true;
+                }
+                if (unit.GetHealthFrac() < 1 && GUILayout.Button("Restore health", buttonStyle))
+                {
+                    HealStat(unit, AEntityCharacter.cStatHealth);
+                }
+                if (unit.GetMoraleFrac() < 1 && GUILayout.Button("Restore morale", buttonStyle))
+                {
+                    HealStat(unit, AEntityCharacter.cStatCommand);
+                }
+                if (unit.HasTag(AEntityCharacter.cTagAirUnit))
+                {
+                    AGameData data = unit.GetComponent<AGameData>();
+                    if (data && data.GetFloatValueAsBool(AEntityCharacter.cMovedThisTurn) && GUILayout.Button("Restore movement points", buttonStyle))
+                    {
+                        data.SetBaseValueAsBool(AEntityCharacter.cMovedThisTurn, false);
+                        SelectUnit(unit);
+                    }
+                }
+                else if (unit.GetStatFrac(AEntityCharacter.cStatMovement) < 1 && GUILayout.Button("Restore movement points", buttonStyle))
+                {
+                    HealStat(unit, AEntityCharacter.cStatMovement);
+                }
+                float nextXP;
+                int promotionLevel = unit.GetPromotionLevel(out nextXP);
+                if (nextXP > 0 && GUILayout.Button("+1 experience level", buttonStyle))
+                {
+                    unit.AddCombatXP(nextXP);
+                    ASelectable selectable = unit.GetComponent<ASelectable>();
+                    AInputHandler.Instance.SetSelection(selectable, false, false, false);
+                }
 
                 GUILayout.EndHorizontal();
+                GUILayout.Label("");
             }
+            if (deletedUnit)
+            {
+                selectedUnits = selectedLoc.GetUnits(AGame.cUnitLayerNormal);
+                if (selectedUnits.Count == 0)
+                {
+                    OpenMenu(TopMenu.Map);
+                    selectedUnitOwner = null;
+                }
+                deletedUnit = false;
+            }
+            GUILayout.EndScrollView();
+        }
+
+        private static void SelectUnit(AEntityCharacter unit)
+        {
+            if (unit.GetPlayer() != currentPlayer)
+                return;
+
+            ASelectable selectable = unit.GetComponent<ASelectable>();
+            if (selectable)
+                AInputHandler.Instance.SetSelection(selectable, false, false, false);
         }
 
         private void DrawTileMenu()
@@ -467,10 +696,9 @@ namespace Ingame_Editor
             if (selectedLoc == null)
                 return;
 
-            DrawLabelRightSide("Player to edit: " + playerToEdit.GetNationName());
             GUILayout.Label("");
             //int rows = Mathf.CeilToInt((float)gridSize / columns);
-            if (terrainChoice)
+            if (openSubMenu == SubMenu.Terrain)
             {
                 DrawTerrainChoiceMenu();
                 //Func<string, bool> changeTerrain = (terrainKey) =>
@@ -482,135 +710,241 @@ namespace Ingame_Editor
                 //DrawChoiceMenu(4, terrains, changeTerrain);
                 return;
             }
-            else if (goodsChoice)
+            else if (openSubMenu == SubMenu.Goods)
             {
                 DrawGoodsChoiceMenu();
                 return;
             }
-            else if (landMarkChoice)
+            else if (openSubMenu == SubMenu.Landmark)
             {
                 DrawLandMarkChoiceMenu();
                 return;
             }
-            else if (unitChoice)
+            else if (openSubMenu == SubMenu.SelectPlayer)
+            {
+                ShowPlayerChoiceMenu(true, SubMenu.Goods);
+                return;
+            }
+            if (selectedLoc.GetIsRevealed(currentPlayer.PlayerNum))
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Terrain: " + terrains[selectedLoc.TerrainType], labelStyle);
+                if (DrawButtonlRightSide("Change terrain"))
+                {
+                    openSubMenu = SubMenu.Terrain;
+                    return;
+                }
+                GUILayout.EndHorizontal();
+                if (selectedCity)
+                    return;
+
+                GUILayout.Label("");
+                GUILayout.BeginHorizontal();
+                string goodsName = null;
+                if (selectedTile && selectedTile.HasTag(AEntityTile.cBonusTile))
+                    goodsName = "Goods: " + AGame.Instance.GetEntityTypeDisplayName(selectedTile.TypeID);
+
+                if (goodsName != null)
+                    GUILayout.Label(goodsName, labelStyle);
+
+                if (DrawButtonlRightSide("Change goods"))
+                {
+                    openSubMenu = SubMenu.Goods;
+                    return;
+                }
+                GUILayout.EndHorizontal();
+                if (selectedLocValidForLandmark)
+                {
+                    GUILayout.Label("");
+                    if (DrawButtonlRightSide("Create landmark"))
+                    {
+                        GetLandmarks(selectedLoc.TileCoord);
+                        OpenSubMenu(SubMenu.Landmark);
+                        return;
+                    }
+                }
+                if (selectedTile)
+                {
+                    string name = null;
+                    if (selectedTile.HasTag(AEntityTile.cTagBarbarianCamp))
+                        name = "barbarian camp";
+                    else if (selectedTile.HasTag(ANeutralAI.cTagNeutralCampSpawnInhibitor))
+                        name = "megafauna den";
+                    else if (selectedTile.HasTag(AEntityTile.cBonusTile))
+                        name = "goods";
+                    else if (selectedTile.IsLandmark())
+                        name = "landmark";
+
+                    if (name != null)
+                    {
+                        GUILayout.Label("");
+                        if (DrawButtonlRightSide("Remove " + name))
+                        {
+                            selectedTile.DestroyEntity(false, false, true, false, true, false);
+                            SelectLocation(selectedLoc);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (DrawButtonlRightSide("Reveal selected tile"))
+                {
+                    selectedLoc.RevealArea(0, currentPlayer.PlayerNum);
+                }
+                GUILayout.Label("");
+                if (DrawButtonlRightSide("Reveal selected tile and neighbouring tiles"))
+                {
+                    selectedLoc.RevealArea(1, currentPlayer.PlayerNum);
+                }
+                GUILayout.Label("");
+                if (DrawButtonlRightSide("Reveal entire map"))
+                {
+                    AMapController.Instance.RevealFog(true);
+                }
+            }
+            if (landmarksRevealed == false)
+            {
+                GUILayout.Label("");
+                if (DrawButtonlRightSide("Reveal all landmarks"))
+                {
+                    ACard card = ACard.FindFromText("EXPLORERS-LANDMARKS");
+                    card.Play(null, null, playerToEdit);
+                    landmarksRevealed = true;
+                }
+            }
+            if (rewardCampsRevealed == false)
+            {
+                GUILayout.Label("");
+                if (DrawButtonlRightSide("Reveal all tribal camps"))
+                {
+                    ACard card = ACard.FindFromText("EXPLORERS-LANDMARKS");
+                    card.Choices[0].Effects[0].Target = "ENTTAG,ALLPLAYERS-" + AEntityTile.cTagRewardCamp;
+                    card.Play(null, null, playerToEdit);
+                    rewardCampsRevealed = true;
+                }
+            }
+        }
+
+        private static void HealStat(AEntityCharacter unit, string stat)
+        {
+            unit.HealStatFrac(stat, 1f);
+            SelectUnit(unit);
+        }
+
+        private void DrawCreateUnitMenu()
+        {
+            GUILayout.Label("");
+            if (selectedUnitOwner == null)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Created unit will belong to " + playerToEdit.GetNationName(), labelStyle);
+                if (GUILayout.Button("Select another player", buttonStyle))
+                    OpenSubMenu(SubMenu.SelectPlayer);
+
+                GUILayout.EndHorizontal();
+            }
+            else
+                DrawLabelRightSide("Created unit will belong to " + selectedUnitOwner.GetNationName());
+
+            GUILayout.Label("");
+            if (openSubMenu == SubMenu.Unit)
             {
                 DrawUnitChoiceMenu();
                 return;
             }
-            DrawLabelRightSide("Terrain: " + terrains[selectedLoc.TerrainType]);
-            if (GUILayout.Button("Change terrain"))
+            if (openSubMenu == SubMenu.SelectPlayer)
             {
-                terrainChoice = true;
+                ShowPlayerChoiceMenu(false);
                 return;
             }
-            if (selectedCity == null)
+            int playerToCheck = GetPlayerIDforCreateUnitMenu();
+            if (selectedLoc.HasSpaceFor(1, playerToCheck, AGame.cUnitLayerAir))
             {
-                string goodsName = "";
-                if (selectedTile && selectedTile.HasTag(AEntityTile.cBonusTile))
+                if (DrawButtonlRightSide("Create air unit"))
                 {
-                    goodsName = "Goods: " + AGame.Instance.GetEntityTypeDisplayName(selectedTile.TypeID);
-                    GUILayout.Label("");
-                }
-                if (numValidResources > 0)
-                {
-                    DrawLabelRightSide(goodsName);
-                    if (GUILayout.Button("Change goods"))
-                    {
-                        goodsChoice = true;
-                        return;
-                    }
-                }
-                if (selectedLocValidForLandmarks)
-                {
-                    GUILayout.Label("");
-                    if (GUILayout.Button("Create landmark"))
-                    {
-                        landmarks = GetLandmarks(selectedLoc.TileCoord);
-                        landMarkChoice = true;
-                        return;
-                    }
+                    unitList = Util.GetEntityInfosWithTag(AEntityCharacter.cTagAirUnit);
+                    OpenSubMenu(SubMenu.Unit);
                 }
             }
-            if (selectedLoc.HasSpaceFor(1, playerToEdit.PlayerNum, AGame.cUnitLayerNormal) == false)
+            if (selectedLoc.HasSpaceFor(1, playerToCheck, AGame.cUnitLayerNormal) == false)
                 return;
 
-            GUILayout.Label("");
             if (Util.IsWaterTile(selectedLoc))
             {
-                if (GUILayout.Button("Create civilian unit"))
+                if (playerToCheck > 0 && DrawButtonlRightSide("Create civilian unit"))
                 {
                     unitList = Util.GetEntityInfosWithTag(AEntityCharacter.cTerrainTagWaterMovement);
-                    //foreach (var unit in unitList)
-                    //{
-                    //    int att = unit.GetStartingDataValueAsInt(ACombatManager.cStatAttack);
-                    //    Main.logger.LogMessage("" + unit.ID + " att " + att);
-                    //}
                     unitList = Util.GetEntityInfosWithAnyTag(unitList, civilNavalUnitTags);
-                    unitChoice = true;
+                    OpenSubMenu(SubMenu.Unit);
                 }
-                if (GUILayout.Button("Create military unit"))
+                if (DrawButtonlRightSide("Create military unit"))
                 {
-                    //< Tag > CombatType:CT_Ranged
-                    //CombatType: CT_Line
-                    //< Tag > CombatType:CT_Mobile
-                    //unitList = Util.GetEntityInfosWithTag(AEntityCharacter.cTerrainTagWaterMovement);
-                    //    unitList = Util.RemoveEntityInfosFromList(unitList, "UtilityShip");
-                    //    unitList = Util.RemoveEntityInfosFromList(unitList, "TypeSettler");
                     unitList = Util.GetEntityInfosWithAnyTag(militaryNavalUnitTags);
-                    unitChoice = true;
-                    //Main.logger.LogInfo("unitList ");
-                    //foreach (var unit in unitList)
-                    //    Main.logger.LogInfo(" " + unit.ID);
+                    OpenSubMenu(SubMenu.Unit);
                 }
             }
-            else if (GUILayout.Button("Create civilian unit"))
+            else if (playerToCheck > 0 && DrawButtonlRightSide("Create civilian unit"))
             {
                 unitList = Util.GetEntityInfosWithTag(ACombatManager.cTagNonCombatant);
                 List<AEntityInfo> settlers = Util.GetEntityInfosWithTag("TypeSettler");
                 settlers = Util.RemoveEntityInfosFromList(settlers, AEntityCharacter.cTerrainTagWaterMovement);
                 unitList.AddRange(settlers);
-                unitChoice = true;
+                OpenSubMenu(SubMenu.Unit);
             }
-            else if (GUILayout.Button("Create line unit"))
+            else if (DrawButtonlRightSide("Create leader unit"))
+            {
+                unitList = Util.GetEntityInfosWithTag("Leader");
+                OpenSubMenu(SubMenu.Unit);
+                //PrintUnits(unitList);
+            }
+            else if (DrawButtonlRightSide("Create line unit"))
             {
                 unitList = Util.GetEntityInfosWithTag("TypeLine");
-                //unitList = GetEntityInfosWithTag(AEntityCharacter.cTagCombatant);
-                unitChoice = true;
+                unitList = Util.RemoveEntityInfosFromList(unitList, "Leader");
+                //unitList = Util.GetEntityInfosWithTag(AEntityCharacter.cTagCombatant);
+                OpenSubMenu(SubMenu.Unit);
             }
-            else if (GUILayout.Button("Create mobile unit"))
+            else if (DrawButtonlRightSide("Create mobile unit"))
             {
                 unitList = Util.GetEntityInfosWithTag("TypeMobile");
-                unitChoice = true;
+                OpenSubMenu(SubMenu.Unit);
             }
-            else if (GUILayout.Button("Create ranged unit"))
+            else if (DrawButtonlRightSide("Create ranged unit"))
             {
                 unitList = Util.GetEntityInfosWithTag("TypeRanged");
                 List<AEntityInfo> commandos = Util.GetEntityInfosWithTag("TypeCommando");
                 commandos = Util.RemoveEntityInfosFromList(commandos, AEntityCharacter.cTerrainTagWaterMovement);
                 unitList.AddRange(commandos);
-                unitChoice = true;
+                OpenSubMenu(SubMenu.Unit);
             }
-            else if (GUILayout.Button("Create siege unit"))
+            else if (DrawButtonlRightSide("Create siege unit"))
             {
                 unitList = Util.GetEntityInfosWithTag("TypeSiege");
-                unitChoice = true;
+                OpenSubMenu(SubMenu.Unit);
             }
-            //if (GUILayout.Button("Create unit for another player", gridStyle))
-            //{
-            //    playerChoice = true;
-            //}
         }
 
-        private void DrawPlayerChoiceMenu()
+        private static int GetPlayerIDforCreateUnitMenu()
+        {
+            if (selectedUnitOwner != null)
+                return selectedUnitOwner.PlayerNum;
+
+            return playerToEdit.PlayerNum;
+        }
+
+        private void ShowPlayerChoiceMenu(bool onlyRealPlayer = true, SubMenu subMenuToOpen = SubMenu.None)
         {
             int columns = 4;
             GUILayout.Label("");
-            GUI.backgroundColor = Color.black;
             GUILayout.BeginHorizontal();
             int count = 0;
             foreach (APlayer player in AGame.Instance.Players)
             {
-                if (player.IsEliminated)
+                if (player.IsEliminated || player == playerToEdit)
+                    continue;
+
+                if (onlyRealPlayer && player.IsReal() == false)
                     continue;
 
                 if (count % columns == 0 && count != 0)
@@ -619,10 +953,15 @@ namespace Ingame_Editor
                     GUILayout.BeginHorizontal();
                 }
                 string name = player.GetNationName();
-                if (GUILayout.Button(name))
+                if (GUILayout.Button(name, buttonStyle))
                 {
-                    topMenuIndex = 0;
+                    if (subMenuToOpen == SubMenu.None)
+                        CloseSubmenu();
+                    else
+                        OpenSubMenu(subMenuToOpen);
+
                     playerToEdit = player;
+                    GetAdvanceAges();
                 }
                 count++;
             }
@@ -633,28 +972,52 @@ namespace Ingame_Editor
         {
             GUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            GUILayout.Label(s);
+            GUILayout.Label(s, labelStyle);
             GUILayout.EndHorizontal();
+        }
+
+        private bool DrawButtonlRightSide(string s)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            float scaledWidth = 365f * Config.editorUIscale.Value;
+            bool clicked = GUILayout.Button(s, buttonStyle, GUILayout.Width(scaledWidth));
+            GUILayout.EndHorizontal();
+            return clicked;
         }
 
         private void DrawLandMarkChoiceMenu()
         {
             int columns = 4;
-            GUILayout.Label("");
+            string landMarkCheckText = "Check if landMark is valid for map";
+            bool clicked = false;
+            if (landMarkCheck)
+            {
+                clicked = DrawSelectedButton(landMarkCheckText);
+            }
+            else
+                clicked = GUILayout.Button(landMarkCheckText, buttonStyle);
+
+            if (clicked)
+            {
+                landMarkCheck = !landMarkCheck;
+            }
             GUILayout.BeginHorizontal();
             int count = 0;
             foreach (var kv in landmarks)
             {
+                if (landMarkCheck && validLandmarks.Contains(kv.Key) == false)
+                    continue;
+
                 if (count % columns == 0 && count != 0)
                 {
                     GUILayout.EndHorizontal();
                     GUILayout.BeginHorizontal();
                 }
-                if (GUILayout.Button(kv.Value))
+                if (GUILayout.Button(kv.Value, buttonStyle))
                 {
                     AEntityTile tile = ALandmarkManager.Instance.CreateLandmark(selectedLoc.TileCoord, kv.Key);
-                    //SelectLocation(AInputHandler.Instance.SelectedLocation);
-                    CloseSubmenus();
+                    SelectLocation(selectedLoc);
                 }
                 count++;
             }
@@ -666,33 +1029,27 @@ namespace Ingame_Editor
             return id == "LM_WASTELAND_RUINS_A" || id == "LM_WASTELAND_RUINS_B" || id == "LM_WASTELAND_RUINS_C" || id == "LM_WASTELAND_RUINS_D" || id == "LM_WASTELAND_RUINS_REPEATABLE2" || id.StartsWith("SHARED_LANDMARK_RULES") || id.StartsWith("LM_QUEST");
         }
 
-        public Dictionary<string, string> GetLandmarks(ATileCoord coord)
+        public void GetLandmarks(ATileCoord coord)
         {
-            landmarks = new Dictionary<string, string>();
-            Main.logger.LogInfo("GetLandmarks");
+            landmarks.Clear();
+            validLandmarks.Clear();
             foreach (string id in ALandmarkManager.Instance.LandmarkInfo.Keys)
             {
                 if (ShouldNotSpawnLandmark(id))
                     continue;
 
                 string name = GetLandmarkName(id);
-                Main.logger.LogMessage(" " + id + " " + name);
-                if (Config.landmarkCheck.Value)
-                {
-                    ALandmark landmark = ALandmarkManager.Instance.LandmarkInfo[id];
-                    if (landmark != null && landmark.IsValid(coord))
-                        landmarks[id] = name;
-                }
-                else
-                    landmarks[id] = name;
+                landmarks[id] = name;
+                ALandmark landmark = ALandmarkManager.Instance.LandmarkInfo[id];
+                if (landmark != null && landmark.IsValid(coord))
+                    validLandmarks.Add(id);
             }
-            return landmarks;
         }
 
         private string GetLandmarkName(string id)
         {
-            ALandmark landmarkInfo = ALandmarkManager.Instance.GetLandmarkInfo(id);
-            string key = string.Format("Landmark-{0}-DisplayName", landmarkInfo.ID);
+            ALandmark landmark = ALandmarkManager.Instance.GetLandmarkInfo(id);
+            string key = string.Format("Landmark-{0}-DisplayName", landmark.ID);
             return AStringTable.Instance.GetString(key);
         }
 
@@ -700,8 +1057,7 @@ namespace Ingame_Editor
         {
             int columns = 4;
             float scaledHeight = 600f * Config.editorUIscale.Value;
-            scrollPosition = GUILayout.BeginScrollView(scrollPosition, GUILayout.Height(scaledHeight * .85f)); // line unit list is big
-            GUILayout.Label("");
+            scrollPosition = GUILayout.BeginScrollView(scrollPosition, GUILayout.Height(scaledHeight * .75f));
             GUILayout.BeginHorizontal();
             for (int i = 0; i < unitList.Count; i++)
             {
@@ -712,16 +1068,17 @@ namespace Ingame_Editor
                 }
                 string id = unitList[i].ID;
                 string name = AEntityInfoManager.Instance.GetEntityInfoDisplayName(id);
-                if (id == "UNIT_DEBUGSCOUT")
-                    name = "Debug scout";
+                if (nameOverrides.ContainsKey(id))
+                    name = nameOverrides[id];
 
-                if (GUILayout.Button(name))
+                if (GUILayout.Button(name, buttonStyle))
                 {
                     AEntityCharacter unit = AMapController.Instance.CreateUnit(id, selectedLoc.TileCoord, playerToEdit.PlayerNum);
-                    ASelectable selectable = unit.GetComponent<ASelectable>();
-                    AInputHandler.Instance.SetSelection(selectable, false, false, false);
-                    CloseSubmenus();
-                    //SelectTile(selectedLoc);
+                    if (CanCreateUnit() == false)
+                        OpenMenu(TopMenu.Units);
+
+                    SelectLocation(selectedLoc);
+                    SelectUnit(unit);
                 }
             }
             GUILayout.EndHorizontal();
@@ -733,7 +1090,7 @@ namespace Ingame_Editor
             int count = 0;
             foreach (var kv in goods)
             {
-                if (Config.tileGoodsCheck.Value && loc.GetTerrainType().IsResourceTileTypeValid(kv.Key, AGame.Instance.CurrPlayer.PlayerNum) == false)
+                if (goodsPlayerCheck && loc.GetTerrainType().IsResourceTileTypeValid(kv.Key, AGame.Instance.CurrPlayer.PlayerNum) == false)
                     continue;
 
                 count++;
@@ -745,11 +1102,39 @@ namespace Ingame_Editor
         {
             int columns = 6;
             int count = 0;
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Select another player", buttonStyle))
+                OpenSubMenu(SubMenu.SelectPlayer);
+
+            string goodsPlayerCheckText = "Check if goods are valid for " + playerToEdit.GetNationName();
+            bool clickedGoodsPlayerCheck = false;
+            if (goodsPlayerCheck)
+                clickedGoodsPlayerCheck = DrawSelectedButton(goodsPlayerCheckText);
+            else
+                clickedGoodsPlayerCheck = GUILayout.Button(goodsPlayerCheckText, buttonStyle);
+
+            if (clickedGoodsPlayerCheck)
+                goodsPlayerCheck = !goodsPlayerCheck;
+            GUILayout.EndHorizontal();
+            string goodsTerrainCheckText = "Check if goods are valid for terrain";
+            bool clickedGoodsTerrainCheck = false;
+            if (goodsTerrainCheck)
+                clickedGoodsTerrainCheck = DrawSelectedButtonRightSide(goodsTerrainCheckText);
+            else
+                clickedGoodsTerrainCheck = DrawButtonlRightSide(goodsTerrainCheckText);
+
+            if (clickedGoodsTerrainCheck)
+            {
+                goodsTerrainCheck = !goodsTerrainCheck;
+            }
             GUILayout.Label("");
             GUILayout.BeginHorizontal();
             foreach (var kv in goods)
             {
-                if (Config.tileGoodsCheck.Value && selectedLoc.GetTerrainType().IsResourceTileTypeValid(kv.Key, playerToEdit.PlayerNum) == false)
+                if (goodsPlayerCheck && Util.IsGoodsTypeValidForPlayer(kv.Key, playerToEdit.PlayerNum) == false)
+                    continue;
+
+                if (goodsTerrainCheck && Util.IsGoodsTypeValidForTerrain(selectedLoc.GetTerrainType(), kv.Key) == false)
                     continue;
 
                 if (selectedTile && selectedTile.TypeID == kv.Value)
@@ -760,10 +1145,10 @@ namespace Ingame_Editor
                     GUILayout.EndHorizontal();
                     GUILayout.BeginHorizontal();
                 }
-                if (GUILayout.Button(kv.Value))
+                if (GUILayout.Button(kv.Value, buttonStyle))
                 {
                     selectedTile = AMapController.Instance.SpawnTile(kv.Key, selectedLoc, selectedLoc.PlayerNum);
-                    CloseSubmenus();
+                    CloseSubmenu();
                 }
                 count++;
             }
@@ -786,11 +1171,11 @@ namespace Ingame_Editor
                 if (kv.Key == selectedLoc.TerrainType)
                     continue;
 
-                if (GUILayout.Button(kv.Value))
+                if (GUILayout.Button(kv.Value, buttonStyle))
                 {
                     selectedLoc.ChangeTerrain(kv.Key);
                     SelectLocation(AInputHandler.Instance.SelectedLocation);
-                    CloseSubmenus();
+                    CloseSubmenu();
                 }
                 count++;
             }
@@ -812,11 +1197,11 @@ namespace Ingame_Editor
                 if (kv.Key == selectedLoc.TerrainType)
                     continue;
 
-                if (GUILayout.Button(kv.Value))
+                if (GUILayout.Button(kv.Value, buttonStyle))
                 {
                     func(kv.Key);
                     SelectLocation(AInputHandler.Instance.SelectedLocation);
-                    CloseSubmenus();
+                    CloseSubmenu();
                 }
                 count++;
             }
